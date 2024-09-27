@@ -1,0 +1,16 @@
+* build_crack.lammps
+** prerequisites
+- lattice parameter
+- elastic tensor
+
+* k_load.lammps
+** prerequisites
+- crack position file
+- restart file
+- stroh tensor file
+
+* procedure
+./run.sh prep spec_template build
+./run.sh debug|calc spec_template build
+./run.sh prep spec_template load 
+./run.sh debug|calc spec_template load

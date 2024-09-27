@@ -1,0 +1,212 @@
+include init.mod
+include ${lmp_t_dir}/module/thermo_variable.mod
+
+# populating the box with atoms in specified orientation
+variable gsc_method string "scratch" # scratch | data | dump | restart
+include module/generate_structure.mod
+include module/thermo.mod
+run 0
+# write dump, data before displace atoms
+write_dump all custom dump.init_sc id type xu yu zu
+write_data data.init_sc
+# print orientation info for calculating Stroh tensor
+print """
+# system orientation
+# [[n1],[n2],[n3]]
+${n11} ${n12} ${n13}
+${n21} ${n22} ${n23}
+${n31} ${n32} ${n33}
+""" file data/orientation.dat
+
+
+# make sure z axis is perpendicular to x y plane
+if "$(xz) > 1e-5 || $(xz) < -1e-5 || $(xz) > 1e-5 || $(xz) < -1e-5" then &
+   "print 'z axis can not be tilted' file error.dat" &
+   "jump SELF end_of_calc"
+
+# radius of system
+if "$(v_supercell_lx) > $(v_supercell_ly)" then &
+   "variable rmax equal $(v_supercell_ly/2)" &
+else &
+   "variable rmax equal $(v_supercell_lx/2)"
+variable rmin equal "v_rmax-v_pot_rc*2.1"
+# determined approximate crack center
+variable bcenter_x equal $(lx/2)
+variable bcenter_y equal $(ly/2)
+variable nYc equal "ceil( v_bcenter_y / (v_lat_a*v_c22g) ) + v_frac_c2"
+variable nXc equal "ceil( (v_bcenter_x - v_nYc*v_lat_a*v_c21g) / (v_lat_a*v_c11g) ) + v_frac_c1"
+variable Xc equal "(v_nXc*v_c11g+v_nYc*v_c21g)*v_lat_a"
+variable Yc equal "v_nYc*v_c22g*v_lat_a"
+
+# calculate Xc, Yc, delete region, cancel region using python
+if "${crack_type} == sharp" then &
+   "jump SELF python_sharp_crack" &
+elif "${crack_type} == blunt" &
+   "jump SELF python_blunt_crack" &
+elif "${crack_type} == plane" &
+   "jump SELF python_plane_crack" &
+elif "${crack_type} == angle" &
+   "jump SELF python_angle_crack" &
+else &
+   "print 'unknown crack type' file error.dat" &
+   "variable exit_status equal 1" &
+   "jump SELF end_of_fresh_run"
+
+label python_sharp_crack
+label python_blunt_crack
+shell python3 ${lmp_t_dir}/calc/crack_K_loading_new/python/select_plane.py -c ${Xc} ${Yc} -n ${crack_nheight} -t ${crack_type}
+jump SELF finish_python_crack
+
+label python_plane_crack
+include ./crack_tip/${xtal_structure}/${c3}/${plane_normal1}.mod
+shell python3 ${lmp_t_dir}/calc/crack_K_loading_new/python/select_plane.py -c ${Xc} ${Yc} -n ${crack_nheight} -t ${crack_type} -p ${n1g} ${n2g} ${n3g}
+jump SELF finish_python_crack
+
+label python_angle_crack
+include ./crack_tip/${xtal_structure}/${c3}/${plane_normal1}.mod
+variable n1g_t equal ${n1g}
+variable n2g_t equal ${n2g}
+variable n3g_t equal ${n3g}
+include ./crack_tip/${xtal_structure}/${c3}/${plane_normal2}.mod
+shell python3 ${lmp_t_dir}/calc/crack_K_loading_new/python/select_plane.py -c ${Xc} ${Yc} -n ${crack_nheight} -t ${crack_type} -p ${n1g_t} ${n2g_t} ${n3g_t} ${n1g} ${n2g} ${n3g}
+jump SELF finish_python_crack
+label finish_python_crack
+
+include ./data/crack_pos.mod
+variable upper_cancel_plane_pos equal ${upper_crack_plane_pos}+${pot_rc}*${cancel_nheight}
+variable lower_cancel_plane_pos equal ${lower_crack_plane_pos}-${pot_rc}*${cancel_nheight}
+
+region upper_cancel1 plane ${Xc} ${upper_cancel_plane_pos} 0 0 -1 0 units box
+region upper_cancel2 plane ${Xc} ${upper_crack_plane_pos} 0 0 1 0 units box
+region lower_cancel1 plane ${Xc} ${lower_cancel_plane_pos} 0 0 1 0 units box
+region lower_cancel2 plane ${Xc} ${lower_crack_plane_pos} 0 0 -1 0 units box
+region cancel3 plane ${tip_x} ${tip_y} 0 -1 0 0 units box
+
+region tip_left plane $(v_Xc-3) ${Yc} 0 1 0 0 units box
+region tip_right plane ${Xc} ${Yc} 0 -1 0 0 units box
+region tip_vplane intersect 2 tip_left tip_right
+group tip_vplane region tip_vplane
+
+# define delete region, delete atoms in the delete region
+if "${crack_type} == sharp" then &
+   "jump SELF create_sharp_crack" &
+elif "${crack_type} == blunt" &
+   "jump SELF create_blunt_crack" &
+elif "${crack_type} == plane" &
+   "jump SELF create_plane_crack" &
+elif "${crack_type} == angle" &
+   "jump SELF create_angle_crack" &
+else &
+   "print 'unknown crack type' file error.dat" &
+   "variable exit_status equal 1" &
+   "jump SELF end_of_calc"
+
+label create_sharp_crack
+jump SELF finish_create_crack
+
+label create_blunt_crack
+variable rc equal ${crack_height}/2
+region curvature cylinder z $(v_Xc-v_rc) ${Yc} ${rc} INF INF units box
+region slit block INF $(v_Xc-v_rc) $(v_Yc-v_rc) $(v_Yc+v_rc) INF INF units box
+region crack union 2 curvature slit
+delete_atoms region crack
+jump SELF finish_create_crack
+
+label create_plane_crack
+region upper plane ${Xc} ${upper_crack_plane_pos} 0 0 -1 0 units box
+region lower plane ${Xc} ${lower_crack_plane_pos} 0 0 1 0 units box
+region tip plane ${tip_x} ${tip_y} 0 ${n11g} ${n12g} ${n13g} units box
+region crack intersect 3 upper lower tip
+delete_atoms region crack
+
+region upper_cancel2 delete
+region lower_cancel2 delete
+region upper_cancel2 plane ${tip_x} ${tip_y} 0 0 1 0 units box
+region lower_cancel2 plane ${tip_x} ${tip_y} 0 0 -1 0 units box
+# inclined cancel plane
+if "${inclined_cancel} == 1" then &
+   "region cancel3 delete" &
+   "region cancel3 plane ${tip_x} ${tip_y} 0 ${n11g} ${n12g} ${n13g} units box"
+# region cancel3 delete # temporary
+# region cancel3 plane ${tip_x} ${tip_y} 0 ${n11g} ${n12g} ${n13g} units box # temporary
+jump SELF finish_create_crack
+
+label create_angle_crack
+region upper plane ${Xc} ${upper_crack_plane_pos} 0 0 -1 0 units box
+region lower plane ${Xc} ${lower_crack_plane_pos} 0 0 1 0 units box
+region tip1 plane ${tip_x} ${tip_y} 0 ${n11g} ${n12g} ${n13g} units box
+region tip2 plane ${tip_x} ${tip_y} 0 ${n21g} ${n22g} ${n23g} units box
+region crack intersect 4 upper lower tip1 tip2
+delete_atoms region crack
+
+region upper_cancel2 delete
+region lower_cancel2 delete
+region upper_cancel2 plane ${tip_x} ${tip_y} 0 0 1 0 units box
+region lower_cancel2 plane ${tip_x} ${tip_y} 0 0 -1 0 units box
+# inclined/angled cancel plane
+if "${inclined_cancel} == 1" then &
+   "region cancel3 delete" &
+   "region cancel3 intersect 2 tip1 tip2"
+# region cancel3 delete # temporary
+# region cancel3 intersect 2 tip1 tip2 # temporary
+jump SELF finish_create_crack
+
+label finish_create_crack
+
+# define elastic region and inelastic region
+region outer cylinder z ${Xc} ${Yc} ${rmax} INF INF units box
+region inner cylinder z ${Xc} ${Yc} ${rmin} INF INF units box
+group outer region outer
+group inner region inner
+group elastic subtract outer inner
+group inelastic region inner
+group redundant subtract all outer
+delete_atoms group redundant
+
+region cancel_upper intersect 3 upper_cancel1 upper_cancel2 cancel3
+region cancel_lower intersect 3 lower_cancel1 lower_cancel2 cancel3
+group cancel_upper region cancel_upper
+group cancel_lower region cancel_lower
+neigh_modify exclude group cancel_lower cancel_upper
+
+variable group_label atom "gmask(elastic)+2*gmask(inelastic)+2*gmask(cancel_lower)+4*gmask(cancel_upper)+gmask(tip_vplane)"
+
+# # inital relaxation for alloy
+# fix freeze elastic setforce 0 0 0
+# variable dump_group string "all"
+# variable dump_fname string "dump.crack"
+# variable dump_interval equal 1000
+# variable min_result_fname string "init_relax_min_result.dat"
+# print "step fmax fnorm is_converge" file ${min_result_fname}
+# include module/crack_opt.mod
+
+# store initial state
+fix init_pos all store/state 0 xu yu zu
+variable x_org atom f_init_pos[1]
+variable y_org atom f_init_pos[2]
+variable z_org atom f_init_pos[3]
+run 0
+# change_box all boundary s s p
+
+write_dump all custom dump.crack id type xu yu zu v_group_label
+write_data data.crack
+write_restart restart.crack
+# group2ndx ./data/groupinfo.ndx elastic cancel_upper cancel_lower
+# print data recording crack geometry information
+print """
+variable Xc equal ${Xc}
+variable Yc equal ${Yc}
+variable atom_volume equal ${atom_volume}
+# optional
+variable rmin equal ${rmin}
+variable rmax equal ${rmax}
+variable crack_nheight equal ${crack_nheight}
+variable cancel_nheight equal ${cancel_nheight}
+variable crack_height equal ${crack_height}
+variable upper_crack_plane_pos equal ${upper_crack_plane_pos}
+variable lower_crack_plane_pos equal ${lower_crack_plane_pos}
+variable upper_cancel_plane_pos equal ${upper_crack_plane_pos}
+variable lower_cancel_plane_pos equal ${lower_crack_plane_pos}
+""" file data/crack_info.mod
+
+label end_of_calc

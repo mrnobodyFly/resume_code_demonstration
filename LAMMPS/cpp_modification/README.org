@@ -1,0 +1,44 @@
+* displace_atom_crack.h/cpp
+modified from displace_atom.h/cpp
+only works for metal unit
+requires c++17 when compiling
+~displace_atom_crack group-ID KII KI KIII Xc Yc Strohtensor~
+- ~KII KI KIII~ = desired K value in MPa sqrt{m}
+- ~Xc Yc~ = crack tip position in A
+- ~Strohtensor~ = stroh tensor file name
+* EXTRA-Fix:
+** fix_pafi_v1.h/cpp
+modified from fix_pafi.h/cpp
+nearly same implementation as the original one; only modify the ouput value
+~fix ID group-ID pafi/v1 compute-ID Temp Tdamp seed keyword values~
+- ~compute-ID~ = ID of compute property/atom with at least 12 fields (X0, dX0, d^2X0/|dX0|^2, d^3X0/|dX0|^2)
+- ~Temp~ = desired temperature (temperature unit)
+- ~Tdamp~ = damping parameter (time unit)
+- ~seed~ = random number seed for noise
+- ~keyword~ = overdamped or com
+  - ~overdamped~ value = yes or no, default no
+    - ~yes~ = Brownian integration
+    - ~no~ = Langevin integration
+  - ~com~ value= yes or no, default no
+    - ~yes~ = zero linear momentum
+    - ~no~ = do not zero linear momentum
+** fix_pafi_v2.h/cpp
+same equation of motion; remove redundant code;
+~fix ID group-ID pafi/v1 compute-ID Temp Tdamp seed keyword values~
+- ~compute-ID~ = ID of compute property/atom with at least 12 fields (X0, dX0, d^2X0/|dX0|^2, d^3X0/|dX0|^2)
+- ~Temp~ = desired temperature (temperature unit)
+- ~Tdamp~ = damping parameter (time unit)
+- ~seed~ = random number seed for noise
+- ~keyword~ = overdamped or com
+  - ~overdamped~ value = yes or no
+    - ~yes~ = Brownian integration
+    - ~no~ = Langevin integration
+  - ~com~ value= yes or no
+    - ~yes~ = zero linear momentum
+    - ~no~ = do not zero linear momentum
+** fix_pafi_v3.h/cpp
+correct equation of motion; remove redundant code;
+
+* XMEAM:
+last digit in library.xmeam should be integer
+modified from MEAM

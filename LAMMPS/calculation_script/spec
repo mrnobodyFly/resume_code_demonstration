@@ -1,0 +1,26 @@
+#!/usr/bin/env bsah
+debug_level=1
+default_app_msg_level=1
+
+. ../../config/config
+
+calc_name=crack_K_loading_new
+run_root_path=~/scratch/run
+
+
+pot_rc=8 # potential cutoff distance
+full_elastic=0 # whether inelastic effect is accounted
+#---------------------------------------------
+# minimization
+#---------------------------------------------
+conv_energy_tol=0
+conv_force_tol=1e-9
+max_iter=5e3
+max_eval=1e4
+
+opt_loop_size=3
+fmax_tol=5e-9
+
+atom_type_seed=123457
+
+env_var=(TF_NUM_INTEROP_THREADS=1 TF_NUM_INTRAOP_THREADS=1)

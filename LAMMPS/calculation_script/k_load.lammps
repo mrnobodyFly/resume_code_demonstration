@@ -1,0 +1,134 @@
+include init.mod
+include ${lmp_t_dir}/module/thermo_variable.mod
+
+#----------------------------------------
+# Create cracked structure from restart file
+#----------------------------------------
+if "${is_relaxed}==0" then "variable restart_fname string restart.crack"
+variable gsc_method string "restart" # scratch | data | dump | restart
+include module/generate_structure.mod
+include module/thermo.mod
+# read atom_volume, Xc, Yc 
+include data/crack_info.mod
+
+# restore internal state of fix store/state
+fix init_pos all store/state 0 xu yu zu
+variable x_org atom f_init_pos[1]
+variable y_org atom f_init_pos[2]
+variable z_org atom f_init_pos[3]
+
+# cancel interactions if necessary
+neigh_modify exclude group cancel_lower cancel_upper
+variable group_label atom "gmask(elastic)+2*gmask(inelastic)+2*gmask(cancel_lower)+4*gmask(cancel_upper)+gmask(tip_vplane)"
+
+#----------------------------------------
+# compute per atom stress
+#----------------------------------------
+compute virial_stress all stress/atom NULL virial
+# compute voronoi_volume all voronoi/atom
+variable sxx atom c_virial_stress[1]/v_atom_volume*1e-4 # units: GPa
+variable syy atom c_virial_stress[2]/v_atom_volume*1e-4
+variable szz atom c_virial_stress[3]/v_atom_volume*1e-4
+variable sxy atom c_virial_stress[4]/v_atom_volume*1e-4
+variable sxz atom c_virial_stress[5]/v_atom_volume*1e-4
+variable syz atom c_virial_stress[6]/v_atom_volume*1e-4
+run 0
+
+#----------------------------------------
+# apply initial displacement if necessary
+#----------------------------------------
+if "${is_relaxed}==1" then &
+    "variable KII0 equal ${KII0}+${dKII}" &
+    "variable KI0 equal ${KI0}+${dKI}" &
+    "variable KIII0 equal ${KIII0}+${dKIII}" &
+    "jump SELF incremental_loading"
+
+displace_atoms_crack all ${KII0} ${KI0} ${KIII0} ${Xc} ${Yc} ${stroh_tensor_fname}
+# write dump, data, restart file
+variable KII0_fmt format KII0 "%.4f"
+variable KI0_fmt format KI0 "%.4f"
+variable KIII0_fmt format KIII0 "%.4f"
+write_dump all custom dump.crack_sc_${KII0_fmt}_${KI0_fmt}_${KIII0_fmt} id type xu yu zu v_group_label
+write_data data.crack_sc_${KII0_fmt}_${KI0_fmt}_${KIII0_fmt}
+write_restart restart.crack_sc_${KII0_fmt}_${KI0_fmt}_${KIII0_fmt}
+
+#----------------------------------------
+# apply incremental K loading
+#----------------------------------------
+label incremental_loading
+# some variables controlling output during minimization
+variable dump_group string "all"
+# region ${dump_group} cylinder z ${Xc} ${Yc} 200 INF INF units box
+# group ${dump_group} region ${dump_group}
+variable dump_interval equal 100
+variable min_result_fname string "min_result.txt"
+print "step fmax fnorm is_converge" file ${min_result_fname}
+
+# K value and format
+variable KII_i equal "v_KII0+(v_k_loop_i-1)*v_dKII"
+variable KI_i equal "v_KI0+(v_k_loop_i-1)*v_dKI"
+variable KIII_i equal "v_KIII0+(v_k_loop_i-1)*v_dKIII"
+variable KII_i_fmt format KII_i "%.4f"
+variable KI_i_fmt format KI_i "%.4f"
+variable KIII_i_fmt format KIII_i "%.4f"
+
+if "${full_elastic} == 1" then "variable displace_group string 'all'" else "variable displace_group string 'elastic'"
+# K loading with relaxation or without relaxation
+label k_load
+fix freeze elastic setforce 0 0 0
+variable k_loop_i loop ${k_load_step}
+label k_load_loop
+    set group ${displace_group} x v_x_org
+    set group ${displace_group} y v_y_org
+    set group ${displace_group} z v_z_org
+    set group ${displace_group} image 0 0 0
+    displace_atoms_crack ${displace_group} ${KII_i} ${KI_i} ${KIII_i} ${Xc} ${Yc} ${stroh_tensor_fname}
+
+    variable dump_fname string "dump.k_load_${KII_i_fmt}_${KI_i_fmt}_${KIII_i_fmt}"
+  	variable restart_out_fname string "restart.k_load_${KII_i_fmt}_${KI_i_fmt}_${KIII_i_fmt}"
+    if "${dKI} < 0 || ${dKII} < 0 || ${dKIII} < 0" then &
+	  "variable dump_fname string 'dump.k_unload_${KII_i_fmt}_${KI_i_fmt}_${KIII_i_fmt}'" &
+	  "variable restart_out_fname string 'restart.k_unload_${KII_i_fmt}_${KI_i_fmt}_${KIII_i_fmt}'"
+    if "${full_elastic} == 1" then "variable dump_fname string 'dump.perfect_k_load_${KII_i_fmt}_${KI_i_fmt}_${KIII_i_fmt}'"
+
+    # relax and write restart
+    if "${full_elastic} == 0" then &
+       "include module/crack_opt.mod" &
+       "write_restart ./${restart_out_fname}"
+
+    reset_timestep 0
+    dump dump_c all custom 1 dump.tmp id type xu yu zu v_sxx v_syy v_szz v_syz v_sxz v_sxy
+    run 0
+    write_dump all custom ./${dump_fname} id type xu yu zu v_group_label v_sxx v_syy v_szz v_syz v_sxz v_sxy
+    undump dump_c
+    next k_loop_i
+    jump SELF k_load_loop
+label k_load_break
+jump SELF end_of_calc
+
+label end_of_calc
+
+# if "${full_elastic} == 1" then "jump SELF perfect_k_load" else "jump SELF k_load"
+# # K loading with no relaxation
+# label perfect_k_load
+# variable k_loop_i loop ${k_load_step}
+# label perfect_k_load_loop
+#     set group all x v_x_org
+#     set group all y v_y_org
+#     set group all z v_z_org
+#     set group all image 0 0 0
+#     displace_atoms_crack all ${KII_i} ${KI_i} ${KIII_i} ${Xc} ${Yc} ${stroh_tensor_fname}
+
+#     variable dump_fname string "dump.perfect_k_load_${KII_i_fmt}_${KI_i_fmt}_${KIII_i_fmt}"
+#     if "${dKI} < 0" then "variable dump_fname string 'dump.perfect_k_unload_${KII_i_fmt}_${KI_i_fmt}_${KIII_i_fmt}'"
+
+#     reset_timestep 0
+#     dump dump_c all custom 1 dump.tmp id type xu yu zu v_sxx v_syy v_szz v_syz v_sxz v_sxy
+#     run 0
+#     write_dump all custom ./${dump_fname} id type xu yu zu v_group_label v_sxx v_syy v_szz v_syz v_sxz v_sxy
+#     undump dump_c
+#     next k_loop_i
+#     jump SELF perfect_k_load_loop
+# label perfect_k_load_break
+# jump SELF end_of_calc
+

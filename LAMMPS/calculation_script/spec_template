@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+. spec
+#-------------------------------------------------------------------------------
+# potential information
+#-------------------------------------------------------------------------------
+pot_id=mishin_1999_prb
+pot_element=Ni
+nt_atom=1
+job_name=crack_K_loading
+pot_rc=5.80375
+
+# atomtype:lattice_c1_c2_c3:crack_type:crack_pos:inclined_cancel
+# crack type: sharp_[nheight_ncancel]|blunt_nheight_ncancel|plane_nheight_ncancel_n1|angle_nheight_ncancel_n1_n2
+# crack_pos: frac_c1_frac_c2
+crack=(
+    Ni:fcc_-11-2_-111_110:plane_1_0.3_1-11:0.25_0:1 # plane_1_1_1-11
+)
+# lx_ly_nz
+size=(
+    200_200_1
+    600_600_1
+)
+# dir_name
+dir_name=(
+    Test_KI_loading
+    Test_KII_loading
+)
+# KII_KI_KIII:dKII_dKI_dKIII:nstep in MPa m^0.5
+k=(
+    0.0000_0.7400_0.0000:0.0000_0.0100_0.0000:2
+    0.2700_0.0000_0.0000:0.0100_0.0000_0.0000:2
+)
+# is_restart:restart_fname
+restart=(
+    0:restart.k_load_0.000_0.270_0.000
+    1:restart.crack
+)
+# crackidx:sizeidx:nameidx:kidx:restartidx:dumpfname1:dumpfname2
+crack_calc_all=(
+    0:0:0:0:x
+    # 0:0:1:1:0
+)
+
+calc_mode_opt=(
+    build load
+)
+calc_mode=${calc_mode_opt[0]}
+# full_elastic=1
+#---------------------------------------------------
+# Define the job specs
+#---------------------------------------------------
+module=lammps/intel_oneAPI_xmeam_kload
+appexe=lmp
+ncpu=32
+partition=xlong
+project=default
+mem=32000M
+wtime=128:00:00
+input_file=in.lammps
+cur_host=$(hostname)
+run_path=${run_root_path}/lammps/calc/$(pot_element_path ${pot_element})/${pot_id}/${calc_name}
